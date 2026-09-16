@@ -1,0 +1,1313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Number & Quantity - Learning & Quiz Adventure</title>
+<style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+  body, html {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #FFFDF5;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: 'Comic Sans MS', 'Chalkboard SE', 'Fredoka One', cursive, sans-serif;
+  }
+  #gameCanvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let W = window.innerWidth;
+let H = window.innerHeight;
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  ctx.resetTransform();
+  ctx.scale(dpr, dpr);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------------- AUDIO & VOICE (ENGLISH) ----------------
+let audioCtx = null;
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+}
+
+function playPopSound(pitchMultiplier = 1) {
+  try {
+    initAudio();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    const freq = 440 * pitchMultiplier;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(freq * 1.5, audioCtx.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.14);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.14);
+  } catch(e) {}
+}
+
+function playFanfare() {
+  const notes = [523.25, 659.25, 783.99, 1046.50, 1318.5];
+  notes.forEach((freq, idx) => {
+    setTimeout(() => {
+      try {
+        initAudio();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.35, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.35);
+      } catch(e) {}
+    }, idx * 100);
+  });
+}
+
+function playWrongSound() {
+  try {
+    initAudio();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(180, audioCtx.currentTime);
+    osc.frequency.linearRampToValueAtTime(100, audioCtx.currentTime + 0.35);
+    gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.35);
+  } catch(e) {}
+}
+
+// Speak function with onend callback support
+function speakEnglish(text, pitch = 1.3, rate = 0.88, onEndCallback = null) {
+  if (!('speechSynthesis' in window)) {
+    if (onEndCallback) setTimeout(onEndCallback, 1000);
+    return;
+  }
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'en-US';
+  utter.pitch = pitch;
+  utter.rate = rate;
+  const voices = window.speechSynthesis.getVoices();
+  const enVoice = voices.find(v => v.lang.startsWith('en') && (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha')));
+  if (enVoice) utter.voice = enVoice;
+
+  let callbackCalled = false;
+  const safeEnd = () => {
+    if (!callbackCalled) {
+      callbackCalled = true;
+      if (onEndCallback) onEndCallback();
+    }
+  };
+
+  utter.onend = safeEnd;
+  utter.onerror = safeEnd;
+
+  // Fallback timer in case speech synthesis stalls
+  const estimatedDuration = Math.max(1500, (text.split(' ').length / 2.5) * 1000 + 1200);
+  setTimeout(safeEnd, estimatedDuration);
+
+  window.speechSynthesis.speak(utter);
+}
+
+// ---------------- GAME MODES & STATE ----------------
+let currentMode = 'practice';
+
+const practiceLevels = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13];
+let practiceIdx = 2; // starts at 5 (matching notebook)
+let practiceCompleted = new Set();
+
+const itemTypes = [
+  { id: 'cupcake', name: 'cupcakes', singular: 'cupcake', emoji: '🧁' },
+  { id: 'star',    name: 'stars',    singular: 'star',    emoji: '⭐' },
+  { id: 'apple',   name: 'apples',   singular: 'apple',   emoji: '🍎' },
+  { id: 'balloon', name: 'balloons', singular: 'balloon', emoji: '🎈' },
+  { id: 'cookie',  name: 'cookies',  singular: 'cookie',  emoji: '🍪' }
+];
+let currentItemIndex = 0; // cupcake by default
+const vibrantColors = ['#FF5E7E', '#38B6FF', '#FFDE59', '#70E000', '#C77DFF', '#FFAA00'];
+
+let itemsInPlate = [];
+let particles = [];
+let sparkles = [];
+let floatingTexts = [];
+
+// Practice Win overlay
+let isPracticeWin = false;
+let practiceWinTimer = 0;
+
+// Screen Shake & Red Flash on Quiz error
+let shakeDuration = 0;
+let redFlashAlpha = 0;
+
+// Quiz State
+let quizQuestions = [];
+let quizIndex = 0;
+let quizScore = 0;
+let quizFeedback = null; // 'correct' | 'wrong' | null
+
+function generateQuiz() {
+  quizQuestions = [];
+  const numbersPool = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+  numbersPool.sort(() => Math.random() - 0.5);
+  for (let i = 0; i < 5; i++) {
+    const randomItem = itemTypes[Math.floor(Math.random() * itemTypes.length)];
+    quizQuestions.push({
+      target: numbersPool[i],
+      item: randomItem
+    });
+  }
+  quizIndex = 0;
+  quizScore = 0;
+  quizFeedback = null;
+}
+
+function startPracticeLevel(idx) {
+  practiceIdx = idx;
+  itemsInPlate = [];
+  isPracticeWin = false;
+  practiceWinTimer = 0;
+  const target = practiceLevels[practiceIdx];
+  const item = itemTypes[currentItemIndex];
+  speakEnglish(`Let's practice number ${target}! Put ${target} ${item.name} in the circle!`);
+}
+
+function startQuizQuestion() {
+  itemsInPlate = [];
+  quizFeedback = null;
+  const q = quizQuestions[quizIndex];
+  speakEnglish(`Quiz Question ${quizIndex + 1}! Put ${q.target} ${q.item.name} in the circle! When you finish, tap Check!`);
+}
+
+// ---------------- ITEM ADD / REMOVE ----------------
+function addItem() {
+  if (quizFeedback !== null) return;
+
+  let target = (currentMode === 'practice') ? practiceLevels[practiceIdx] : quizQuestions[quizIndex].target;
+  let item = (currentMode === 'practice') ? itemTypes[currentItemIndex] : quizQuestions[quizIndex].item;
+
+  if (currentMode === 'practice' && itemsInPlate.length >= target) {
+    speakEnglish(`Great job! You already put ${target}!`);
+    return;
+  }
+  if (itemsInPlate.length >= 20) {
+    speakEnglish("The circle is full!");
+    return;
+  }
+
+  const index = itemsInPlate.length;
+  const color = vibrantColors[index % vibrantColors.length];
+  const circle = getPlateCircle();
+  const radiusRange = circle.r * 0.65;
+  const angle = (index * 2.39996) + Math.random() * 0.15;
+  const dist = (Math.sqrt((index + 0.65) / (20))) * radiusRange;
+
+  const targetX = circle.x + Math.cos(angle) * dist;
+  const targetY = circle.y + Math.sin(angle) * dist;
+
+  itemsInPlate.push({
+    x: targetX,
+    y: targetY,
+    scale: 0,
+    targetScale: 1,
+    color: color,
+    type: item.id,
+    angle: (Math.random() - 0.5) * 0.3
+  });
+
+  const count = itemsInPlate.length;
+  playPopSound(1 + (count * 0.06));
+  createSparkles(targetX, targetY, color);
+
+  floatingTexts.push({
+    x: targetX,
+    y: targetY - 22,
+    text: count.toString(),
+    alpha: 1,
+    scale: 1.5,
+    color: color
+  });
+
+  // Check if reached practice target (only speak number aloud in practice mode, NOT in quiz)
+  if (currentMode === 'practice') {
+    if (count === target) {
+      practiceCompleted.add(practiceIdx);
+      setTimeout(() => {
+        isPracticeWin = true;
+        playFanfare();
+        createConfetti();
+        speakEnglish(`Awesome! You put ${target} ${item.name} in the circle! Excellent!`);
+      }, 450);
+    } else {
+      speakEnglish(count.toString());
+    }
+  }
+}
+
+function removeItem() {
+  if (quizFeedback !== null) return;
+  if (itemsInPlate.length > 0) {
+    const popped = itemsInPlate.pop();
+    isPracticeWin = false;
+    createSparkles(popped.x, popped.y, '#999');
+    playPopSound(0.7);
+    if (currentMode === 'practice') {
+      if (itemsInPlate.length > 0) {
+        speakEnglish(`${itemsInPlate.length}`);
+      } else {
+        speakEnglish("The circle is empty!");
+      }
+    }
+  }
+}
+
+function clearItems() {
+  if (quizFeedback !== null) return;
+  if (itemsInPlate.length > 0) {
+    itemsInPlate = [];
+    isPracticeWin = false;
+    playPopSound(0.6);
+    speakEnglish("All clean! Let's count again!");
+  }
+}
+
+// ---------------- QUIZ VERIFICATION (WAITS UNTIL VOICE COMPLETES) ----------------
+function checkQuizAnswer() {
+  if (currentMode !== 'quiz' || quizFeedback !== null) return;
+
+  const q = quizQuestions[quizIndex];
+  const userCount = itemsInPlate.length;
+
+  if (userCount === q.target) {
+    // CORRECT!
+    quizFeedback = 'correct';
+    quizScore++;
+    playFanfare();
+    createConfetti();
+
+    // MUST FINISH SPEAKING BEFORE PASSING TO NEXT EXERCISE
+    speakEnglish(`Correct! Great job! You placed ${q.target} ${q.item.name}!`, 1.3, 0.88, () => {
+      quizIndex++;
+      if (quizIndex >= quizQuestions.length) {
+        currentMode = 'quiz_result';
+        announceQuizResult();
+      } else {
+        startQuizQuestion();
+      }
+    });
+
+  } else {
+    // WRONG!
+    quizFeedback = 'wrong';
+    shakeDuration = 24;
+    redFlashAlpha = 0.55;
+    playWrongSound();
+
+    // MUST FINISH SPEAKING BEFORE PASSING TO NEXT EXERCISE
+    speakEnglish(`Oops! Not quite. There are ${userCount} ${q.item.name}, but you needed ${q.target}. Let's try the next one!`, 1.25, 0.88, () => {
+      quizIndex++;
+      if (quizIndex >= quizQuestions.length) {
+        currentMode = 'quiz_result';
+        announceQuizResult();
+      } else {
+        startQuizQuestion();
+      }
+    });
+  }
+}
+
+function announceQuizResult() {
+  const percent = Math.round((quizScore / quizQuestions.length) * 100);
+  if (percent >= 80) {
+    playFanfare();
+    createConfetti();
+    speakEnglish(`Congratulations! Your score is ${percent} percent! You are a superstar!`);
+  } else {
+    playWrongSound();
+    speakEnglish(`Your score is ${percent} percent. You need at least 80 percent! Let's go back and practice again!`);
+  }
+}
+
+// ---------------- PARTICLES & EFFECTS ----------------
+function createSparkles(x, y, color) {
+  for (let i = 0; i < 14; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const spd = Math.random() * 4 + 2;
+    sparkles.push({
+      x: x, y: y,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd,
+      color: color,
+      r: Math.random() * 5 + 3,
+      alpha: 1
+    });
+  }
+}
+
+function createConfetti() {
+  for (let i = 0; i < 90; i++) {
+    particles.push({
+      x: Math.random() * W,
+      y: -20 - Math.random() * H * 0.4,
+      vx: (Math.random() - 0.5) * 4.5,
+      vy: Math.random() * 4 + 3.5,
+      r: Math.random() * 9 + 6,
+      rot: Math.random() * 360,
+      vrot: (Math.random() - 0.5) * 12,
+      color: vibrantColors[Math.floor(Math.random() * vibrantColors.length)]
+    });
+  }
+}
+
+// ---------------- DRAWING FUNCTIONS ----------------
+function drawCuteCupcake(cx, cy, size, frostingColor, rotation = 0) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rotation);
+  const s = size / 55;
+  ctx.scale(s, s);
+
+  ctx.fillStyle = 'rgba(0,0,0,0.1)';
+  ctx.beginPath();
+  ctx.ellipse(0, 24, 25, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(-18, 2);
+  ctx.lineTo(-12, 22);
+  ctx.quadraticCurveTo(0, 25, 12, 22);
+  ctx.lineTo(18, 2);
+  ctx.closePath();
+  ctx.fillStyle = '#E8B982';
+  ctx.fill();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#9C6F44';
+  ctx.stroke();
+
+  [-7, 0, 7].forEach(lx => {
+    ctx.beginPath();
+    ctx.moveTo(lx * 0.9, 2);
+    ctx.lineTo(lx * 0.65, 22);
+    ctx.strokeStyle = '#C99863';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  });
+
+  ctx.beginPath();
+  ctx.moveTo(-22, 2);
+  ctx.quadraticCurveTo(-26, -12, -12, -15);
+  ctx.quadraticCurveTo(0, -26, 12, -15);
+  ctx.quadraticCurveTo(26, -12, 22, 2);
+  ctx.quadraticCurveTo(0, 7, -22, 2);
+  ctx.closePath();
+  ctx.fillStyle = frostingColor;
+  ctx.fill();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#4A154B';
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(0, -22, 5.5, 0, Math.PI * 2);
+  ctx.fillStyle = '#FF1E56';
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(-2, -24, 1.8, 0, Math.PI * 2);
+  ctx.fillStyle = 'white';
+  ctx.fill();
+
+  [-9, 0, 9].forEach((sx, i) => {
+    ctx.fillStyle = ['#FFF', '#FFD166', '#06D6A0'][i];
+    ctx.fillRect(sx - 2, -6, 5, 2.5);
+  });
+
+  ctx.restore();
+}
+
+function drawCuteStar(cx, cy, size, color, rotation = 0) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rotation);
+  const s = size / 55;
+  ctx.scale(s, s);
+
+  ctx.beginPath();
+  const spikes = 5, outerR = 26, innerR = 13;
+  let rot = Math.PI / 2 * 3;
+  const step = Math.PI / spikes;
+  ctx.moveTo(0, -outerR);
+  for (let i = 0; i < spikes; i++) {
+    ctx.lineTo(Math.cos(rot) * outerR, Math.sin(rot) * outerR);
+    rot += step;
+    ctx.lineTo(Math.cos(rot) * innerR, Math.sin(rot) * innerR);
+    rot += step;
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#9E6000';
+  ctx.stroke();
+
+  ctx.fillStyle = '#4A154B';
+  ctx.beginPath();
+  ctx.arc(-6, -2, 2.5, 0, Math.PI * 2);
+  ctx.arc(6, -2, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(0, 3, 5, 0.1 * Math.PI, 0.9 * Math.PI);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#4A154B';
+  ctx.stroke();
+
+  ctx.fillStyle = '#FF5E7E';
+  ctx.beginPath();
+  ctx.arc(-11, 4, 3, 0, Math.PI*2);
+  ctx.arc(11, 4, 3, 0, Math.PI*2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawCuteApple(cx, cy, size, color, rotation = 0) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rotation);
+  const s = size / 55;
+  ctx.scale(s, s);
+
+  ctx.strokeStyle = '#6F4E37';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(0, -18);
+  ctx.quadraticCurveTo(4, -26, 7, -28);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(8, -24, 7, 3.5, 0.5, 0, Math.PI * 2);
+  ctx.fillStyle = '#38B000';
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(0, -14);
+  ctx.bezierCurveTo(-14, -22, -26, -6, -24, 12);
+  ctx.bezierCurveTo(-22, 24, -8, 25, 0, 21);
+  ctx.bezierCurveTo(8, 25, 22, 24, 24, 12);
+  ctx.bezierCurveTo(26, -6, 14, -22, 0, -14);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.lineWidth = 2.8;
+  ctx.strokeStyle = '#5E0B15';
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(-11, -4, 4, 10, -0.4, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawCuteBalloon(cx, cy, size, color, rotation = 0) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rotation);
+  const s = size / 55;
+  ctx.scale(s, s);
+
+  ctx.strokeStyle = '#888';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, 24);
+  ctx.quadraticCurveTo(6, 32, -4, 40);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(0, 22);
+  ctx.bezierCurveTo(-24, 20, -26, -16, 0, -22);
+  ctx.bezierCurveTo(26, -16, 24, 20, 0, 22);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.lineWidth = 2.6;
+  ctx.strokeStyle = '#333';
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(-4, 22);
+  ctx.lineTo(4, 22);
+  ctx.lineTo(0, 26);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.ellipse(-11, -8, 3.5, 9, -0.4, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawCuteCookie(cx, cy, size, color, rotation = 0) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rotation);
+  const s = size / 55;
+  ctx.scale(s, s);
+
+  ctx.beginPath();
+  ctx.arc(0, 0, 24, 0, Math.PI * 2);
+  ctx.fillStyle = '#E0A96D';
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#8C531B';
+  ctx.stroke();
+
+  const chips = [
+    {x: -11, y: -9}, {x: 6, y: -13}, {x: -6, y: 7},
+    {x: 10, y: 5}, {x: 0, y: -3}, {x: -12, y: 13}
+  ];
+  ctx.fillStyle = '#4A2810';
+  chips.forEach(ch => {
+    ctx.beginPath();
+    ctx.arc(ch.x, ch.y, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.restore();
+}
+
+function drawItemInstance(item, size) {
+  if (item.type === 'star') {
+    drawCuteStar(item.x, item.y, size, item.color, item.angle);
+  } else if (item.type === 'apple') {
+    drawCuteApple(item.x, item.y, size, item.color, item.angle);
+  } else if (item.type === 'balloon') {
+    drawCuteBalloon(item.x, item.y, size, item.color, item.angle);
+  } else if (item.type === 'cookie') {
+    drawCuteCookie(item.x, item.y, size, item.color, item.angle);
+  } else {
+    drawCuteCupcake(item.x, item.y, size, item.color, item.angle);
+  }
+}
+
+function getPlateCircle() {
+  const size = Math.min(W * 0.72, H * 0.36);
+  return {
+    x: W / 2,
+    y: H * 0.44,
+    r: size / 2
+  };
+}
+
+function getButtonsLayout() {
+  const cy = H * 0.78;
+  const isQuiz = (currentMode === 'quiz');
+
+  const btnW = Math.min(W * 0.84, 340);
+  const btnH = 60;
+  const addBtn = {
+    x: (W - btnW) / 2,
+    y: cy - btnH / 2 - (isQuiz ? 24 : 0),
+    w: btnW,
+    h: btnH
+  };
+
+  const subW = Math.min(W * 0.39, 155);
+  const subH = 42;
+  const subY = addBtn.y + btnH + 12;
+  const removeBtn = {
+    x: W / 2 - subW - 10,
+    y: subY,
+    w: subW,
+    h: subH
+  };
+  const clearBtn = {
+    x: W / 2 + 10,
+    y: subY,
+    w: subW,
+    h: subH
+  };
+
+  const verifyBtn = {
+    x: (W - btnW) / 2,
+    y: subY + subH + 12,
+    w: btnW,
+    h: 56
+  };
+
+  return { addBtn, removeBtn, clearBtn, verifyBtn };
+}
+
+function drawRoundedRect(x, y, w, h, radius, fillColor, strokeColor, lineWidth = 4) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + w - radius, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+  ctx.lineTo(x + w, y + h - radius);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+  ctx.lineTo(x + radius, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+  if (fillColor) {
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+  }
+  if (strokeColor) {
+    ctx.lineWidth = lineWidth;
+    ctx.strokeStyle = strokeColor;
+    ctx.stroke();
+  }
+}
+
+// ---------------- NOTEBOOK BACKGROUND ----------------
+function drawNotebookGrid() {
+  ctx.fillStyle = '#FFFDF5';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.strokeStyle = '#E2EDF7';
+  ctx.lineWidth = 1.5;
+  const lineSpacing = 30;
+  for (let y = lineSpacing; y < H; y += lineSpacing) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = '#FFCDD2';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(35, 0);
+  ctx.lineTo(35, H);
+  ctx.stroke();
+}
+
+// ---------------- PRACTICE HEADER ----------------
+function drawPracticeNavigation() {
+  ctx.save();
+  ctx.fillStyle = '#FF3B69';
+  ctx.font = `bold ${Math.max(17, Math.min(W * 0.055, 28))}px 'Comic Sans MS', cursive`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText("— Number and quantity —", W / 2, 6);
+  ctx.restore();
+
+  const topY1 = 40;
+  const topY2 = 74;
+  const half = 5;
+  const spacing = Math.min(W / 6.2, 54);
+  const startX = W / 2 - ((half - 1) * spacing) / 2;
+
+  practiceLevels.forEach((lvl, idx) => {
+    const row = idx < 5 ? 0 : 1;
+    const col = idx % 5;
+    const bx = startX + col * spacing;
+    const by = row === 0 ? topY1 : topY2;
+    const isSelected = idx === practiceIdx;
+    const isDone = practiceCompleted.has(idx);
+    const r = isSelected ? 16 : 13;
+
+    if (isSelected) {
+      ctx.beginPath();
+      ctx.arc(bx, by, r + 4, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 71, 126, 0.3)';
+      ctx.fill();
+    }
+
+    ctx.beginPath();
+    ctx.arc(bx, by, r, 0, Math.PI * 2);
+    ctx.fillStyle = isSelected ? '#FF477E' : (isDone ? '#06D6A0' : '#FFFFFF');
+    ctx.fill();
+    ctx.lineWidth = isSelected ? 3 : 2;
+    ctx.strokeStyle = isSelected ? '#FFF' : (isDone ? '#059669' : '#FF9AA2');
+    ctx.stroke();
+
+    ctx.fillStyle = (isSelected || isDone) ? '#FFFFFF' : '#FF477E';
+    ctx.font = `900 ${isSelected ? 15 : 12}px 'Comic Sans MS', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(lvl, bx, by);
+  });
+
+  const itemBarY = 110;
+  const itemSpacing = Math.min(W / 5.5, 60);
+  const itemStartX = W / 2 - ((itemTypes.length - 1) * itemSpacing) / 2;
+
+  itemTypes.forEach((item, idx) => {
+    const ix = itemStartX + idx * itemSpacing;
+    const isSelected = idx === currentItemIndex;
+    const boxSize = isSelected ? 38 : 32;
+
+    drawRoundedRect(ix - boxSize/2, itemBarY - boxSize/2, boxSize, boxSize, 12, isSelected ? '#FFEAA7' : '#FFFFFF', isSelected ? '#FD9644' : '#E0E0E0', isSelected ? 3 : 1.5);
+
+    ctx.font = `${isSelected ? 20 : 16}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(item.emoji, ix, itemBarY);
+  });
+
+  const qBtnW = Math.min(W * 0.44, 180);
+  const qBtnH = 32;
+  const qBtnX = W / 2 - qBtnW / 2;
+  const qBtnY = 138;
+  const allPracticed = practiceCompleted.size >= 5;
+  drawRoundedRect(qBtnX, qBtnY, qBtnW, qBtnH, 16, allPracticed ? '#9D4EDD' : '#DDD', '#FFF', 2);
+  ctx.fillStyle = allPracticed ? '#FFF' : '#777';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(allPracticed ? "⭐ GO TO QUIZ! 🚀" : `Practice (${practiceCompleted.size}/10)`, W / 2, qBtnY + qBtnH / 2);
+}
+
+// ---------------- QUIZ HEADER ----------------
+function drawQuizHeader() {
+  ctx.save();
+  ctx.fillStyle = '#9D4EDD';
+  ctx.font = `900 ${Math.max(20, Math.min(W * 0.065, 30))}px 'Comic Sans MS', cursive`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText("⭐ CHALLENGE QUIZ! ⭐", W / 2, 10);
+
+  ctx.fillStyle = '#4A154B';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillText(`Question ${quizIndex + 1} of ${quizQuestions.length}  |  Score: ${quizScore}`, W / 2, 44);
+
+  const dotSpacing = 24;
+  const dotStartX = W / 2 - ((quizQuestions.length - 1) * dotSpacing) / 2;
+  for (let i = 0; i < quizQuestions.length; i++) {
+    const dx = dotStartX + i * dotSpacing;
+    ctx.beginPath();
+    ctx.arc(dx, 72, i === quizIndex ? 8 : 6, 0, Math.PI * 2);
+    ctx.fillStyle = (i < quizIndex) ? '#06D6A0' : (i === quizIndex ? '#FF477E' : '#DDD');
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#FFF';
+    ctx.stroke();
+  }
+
+  const q = quizQuestions[quizIndex];
+  ctx.fillStyle = '#E63946';
+  ctx.font = `bold ${Math.max(16, Math.min(W * 0.048, 22))}px 'Comic Sans MS'`;
+  ctx.fillText(`Count and put ${q.target} ${q.item.name}!`, W / 2, 98);
+  ctx.restore();
+}
+
+// ---------------- MAIN PLATE CIRCLE ----------------
+function drawPlateCircle() {
+  const plate = getPlateCircle();
+  const isQuiz = (currentMode === 'quiz');
+  let target = isQuiz ? quizQuestions[quizIndex].target : practiceLevels[practiceIdx];
+  let item = isQuiz ? quizQuestions[quizIndex].item : itemTypes[currentItemIndex];
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(plate.x, plate.y, plate.r, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(255, 240, 245, 0.7)';
+  ctx.fill();
+
+  ctx.strokeStyle = '#FF3B69';
+  ctx.lineWidth = 5;
+  ctx.setLineDash([11, 7]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const badgeY = plate.y + plate.r + 25;
+  ctx.fillStyle = '#FF3B69';
+  ctx.font = `bold ${Math.min(W * 0.11, 46)}px 'Comic Sans MS', cursive`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`${target}`, plate.x, badgeY);
+
+  const baseItemSize = Math.min(plate.r * 0.44, 52);
+  itemsInPlate.forEach(it => {
+    if (it.scale < it.targetScale) it.scale += 0.12;
+    drawItemInstance(it, baseItemSize * it.scale);
+  });
+
+  ctx.fillStyle = '#4A154B';
+  ctx.font = `bold ${Math.max(14, Math.min(W * 0.042, 20))}px 'Comic Sans MS', cursive`;
+  if (!isQuiz) {
+    ctx.fillText(`Put ${target} ${item.name}! (${itemsInPlate.length} / ${target})`, plate.x, plate.y - plate.r - 16);
+  } else {
+    ctx.fillText(`Target: ${target} ${item.name}`, plate.x, plate.y - plate.r - 16);
+  }
+
+  // Draw feedback overlay inside circle
+  if (quizFeedback === 'correct') {
+    ctx.fillStyle = 'rgba(6, 214, 160, 0.3)';
+    ctx.beginPath();
+    ctx.arc(plate.x, plate.y, plate.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#059669';
+    ctx.font = '900 70px sans-serif';
+    ctx.fillText('✔️ YES!', plate.x, plate.y);
+  } else if (quizFeedback === 'wrong') {
+    ctx.fillStyle = 'rgba(230, 57, 70, 0.35)';
+    ctx.beginPath();
+    ctx.arc(plate.x, plate.y, plate.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#E63946';
+    ctx.font = '900 70px sans-serif';
+    ctx.fillText('❌ OOPS!', plate.x, plate.y);
+  }
+
+  ctx.restore();
+}
+
+function drawButtons() {
+  const { addBtn, removeBtn, clearBtn, verifyBtn } = getButtonsLayout();
+  const isQuiz = (currentMode === 'quiz');
+  let item = isQuiz ? quizQuestions[quizIndex].item : itemTypes[currentItemIndex];
+
+  const shadow = 5;
+  drawRoundedRect(addBtn.x, addBtn.y + shadow, addBtn.w, addBtn.h, 28, '#D68100', null);
+  drawRoundedRect(addBtn.x, addBtn.y, addBtn.w, addBtn.h, 28, '#FFB703', '#FFFFFF', 4);
+
+  ctx.font = '26px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(item.emoji, addBtn.x + 40, addBtn.y + addBtn.h / 2);
+
+  ctx.fillStyle = '#4A154B';
+  ctx.font = `900 ${Math.min(W * 0.05, 20)}px 'Comic Sans MS', sans-serif`;
+  ctx.fillText(`+ ADD ${item.singular.toUpperCase()}!`, addBtn.x + addBtn.w / 2 + 16, addBtn.y + addBtn.h / 2);
+
+  drawRoundedRect(removeBtn.x, removeBtn.y + 3, removeBtn.w, removeBtn.h, 18, '#CCC', null);
+  drawRoundedRect(removeBtn.x, removeBtn.y, removeBtn.w, removeBtn.h, 18, '#FFF', '#BBB', 2);
+  ctx.fillStyle = '#555';
+  ctx.font = `bold 14px 'Comic Sans MS', sans-serif`;
+  ctx.fillText("↩️ Remove", removeBtn.x + removeBtn.w / 2, removeBtn.y + removeBtn.h / 2);
+
+  drawRoundedRect(clearBtn.x, clearBtn.y + 3, clearBtn.w, clearBtn.h, 18, '#CCC', null);
+  drawRoundedRect(clearBtn.x, clearBtn.y, clearBtn.w, clearBtn.h, 18, '#FFF', '#BBB', 2);
+  ctx.fillStyle = '#555';
+  ctx.fillText("🔄 Clear", clearBtn.x + clearBtn.w / 2, clearBtn.y + clearBtn.h / 2);
+
+  if (isQuiz) {
+    const isWaiting = (quizFeedback !== null);
+    drawRoundedRect(verifyBtn.x, verifyBtn.y + 5, verifyBtn.w, verifyBtn.h, 28, isWaiting ? '#777' : '#048A64', null);
+    drawRoundedRect(verifyBtn.x, verifyBtn.y, verifyBtn.w, verifyBtn.h, 28, isWaiting ? '#AAA' : '#06D6A0', '#FFF', 4);
+    ctx.fillStyle = '#FFF';
+    ctx.font = `900 ${Math.min(W * 0.054, 22)}px 'Comic Sans MS', sans-serif`;
+    ctx.fillText(isWaiting ? "LISTENING... 🔊" : "VERIFY! ✨", verifyBtn.x + verifyBtn.w / 2, verifyBtn.y + verifyBtn.h / 2);
+  }
+}
+
+// ---------------- PRACTICE WIN OVERLAY ----------------
+function drawPracticeWinOverlay() {
+  if (!isPracticeWin) return;
+  practiceWinTimer += 0.05;
+  const item = itemTypes[currentItemIndex];
+  const target = practiceLevels[practiceIdx];
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+  ctx.fillRect(0, 0, W, H);
+
+  const modalW = Math.min(W * 0.86, 380);
+  const modalH = 260;
+  const mx = (W - modalW) / 2;
+  const my = (H - modalH) / 2;
+
+  const bounce = Math.min(1, practiceWinTimer * 2.5);
+  ctx.translate(W / 2, H / 2);
+  ctx.scale(bounce, bounce);
+  ctx.translate(-W / 2, -H / 2);
+
+  drawRoundedRect(mx, my + 10, modalW, modalH, 30, 'rgba(0,0,0,0.15)', null);
+  drawRoundedRect(mx, my, modalW, modalH, 30, '#FFFFFF', '#FFD166', 8);
+
+  ctx.fillStyle = '#FF477E';
+  ctx.font = `900 ${Math.min(W * 0.08, 30)}px 'Comic Sans MS', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText("🎉 FANTASTIC! ⭐", W / 2, my + 24);
+
+  ctx.fillStyle = '#3A104E';
+  ctx.font = `bold 18px 'Comic Sans MS', sans-serif`;
+  ctx.fillText(`You counted ${target} ${item.name}!`, W / 2, my + 78);
+
+  ctx.font = '54px sans-serif';
+  ctx.fillText(item.emoji, W / 2, my + 144);
+
+  const nW = modalW * 0.72;
+  const nH = 50;
+  const nx = (W - nW) / 2;
+  const ny = my + modalH - 68;
+  drawRoundedRect(nx, ny + 4, nW, nH, 25, '#048A64', null);
+  drawRoundedRect(nx, ny, nW, nH, 25, '#06D6A0', '#FFF', 3);
+
+  ctx.fillStyle = '#FFF';
+  ctx.font = `900 18px 'Comic Sans MS', sans-serif`;
+  ctx.textBaseline = 'middle';
+
+  const hasFinishedAll = practiceCompleted.size >= practiceLevels.length;
+  ctx.fillText(hasFinishedAll ? "START THE QUIZ! 🚀" : "Next Number! 🚀", W / 2, ny + nH / 2);
+
+  ctx.restore();
+}
+
+// ---------------- QUIZ RESULT OVERLAY ----------------
+function drawQuizResultOverlay() {
+  if (currentMode !== 'quiz_result') return;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.fillRect(0, 0, W, H);
+
+  const modalW = Math.min(W * 0.9, 410);
+  const modalH = 360;
+  const mx = (W - modalW) / 2;
+  const my = (H - modalH) / 2;
+
+  const percent = Math.round((quizScore / quizQuestions.length) * 100);
+  const passed = percent >= 80;
+
+  drawRoundedRect(mx, my + 10, modalW, modalH, 32, 'rgba(0,0,0,0.2)', null);
+  drawRoundedRect(mx, my, modalW, modalH, 32, '#FFFFFF', passed ? '#FFD166' : '#FF6B6B', 8);
+
+  ctx.fillStyle = passed ? '#FF477E' : '#E63946';
+  ctx.font = `900 ${Math.min(W * 0.08, 30)}px 'Comic Sans MS', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText(passed ? "🏆 CONGRATULATIONS! 🌟" : "💪 KEEP PRACTICING!", W / 2, my + 24);
+
+  ctx.fillStyle = '#2B2D42';
+  ctx.font = `bold 18px sans-serif`;
+  ctx.fillText(`Your Final Score:`, W / 2, my + 75);
+
+  ctx.fillStyle = passed ? '#06D6A0' : '#E63946';
+  ctx.font = `900 ${Math.min(W * 0.18, 70)}px 'Comic Sans MS', sans-serif`;
+  ctx.fillText(`${percent}%`, W / 2, my + 105);
+
+  ctx.fillStyle = '#4A154B';
+  ctx.font = `900 20px sans-serif`;
+  ctx.fillText(`(${quizScore} out of ${quizQuestions.length} correct)`, W / 2, my + 185);
+
+  ctx.fillStyle = '#666';
+  ctx.font = `bold 14px sans-serif`;
+  if (passed) {
+    ctx.fillText("SUPER! You passed the challenge! 🎉", W / 2, my + 225);
+  } else {
+    ctx.fillText("Score is below 80%. Let's try again from level 1! 🔄", W / 2, my + 225);
+  }
+
+  const btnW = modalW * 0.75;
+  const btnH = 54;
+  const bx = (W - btnW) / 2;
+  const by = my + modalH - 78;
+
+  drawRoundedRect(bx, by + 4, btnW, btnH, 27, passed ? '#048A64' : '#C92A2A', null);
+  drawRoundedRect(bx, by, btnW, btnH, 27, passed ? '#06D6A0' : '#FF6B6B', '#FFF', 3);
+
+  ctx.fillStyle = '#FFF';
+  ctx.font = `900 18px 'Comic Sans MS', sans-serif`;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(passed ? "Play Quiz Again! 🚀" : "Back to Start! 🔄", W / 2, by + btnH / 2);
+
+  ctx.restore();
+}
+
+// ---------------- EFFECTS & LOOP ----------------
+function updateAndDrawEffects() {
+  for (let i = sparkles.length - 1; i >= 0; i--) {
+    const s = sparkles[i];
+    s.x += s.vx;
+    s.y += s.vy;
+    s.alpha -= 0.03;
+    if (s.alpha <= 0) {
+      sparkles.splice(i, 1);
+      continue;
+    }
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r * s.alpha, 0, Math.PI * 2);
+    ctx.fillStyle = s.color;
+    ctx.globalAlpha = s.alpha;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const t = floatingTexts[i];
+    t.y -= 1.6;
+    t.alpha -= 0.025;
+    t.scale += 0.02;
+    if (t.alpha <= 0) {
+      floatingTexts.splice(i, 1);
+      continue;
+    }
+    ctx.save();
+    ctx.globalAlpha = t.alpha;
+    ctx.fillStyle = t.color;
+    ctx.font = `900 ${28 * t.scale}px 'Comic Sans MS', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(t.text, t.x, t.y);
+    ctx.restore();
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.rot += p.vrot;
+    if (p.y > H + 40) {
+      particles.splice(i, 1);
+      continue;
+    }
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate((p.rot * Math.PI) / 180);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(-p.r / 2, -p.r / 2, p.r, p.r * 1.5);
+    ctx.restore();
+  }
+}
+
+function gameLoop() {
+  ctx.save();
+
+  if (shakeDuration > 0) {
+    const offsetX = (Math.random() - 0.5) * 16;
+    const offsetY = (Math.random() - 0.5) * 16;
+    ctx.translate(offsetX, offsetY);
+    shakeDuration--;
+  }
+
+  ctx.clearRect(0, 0, W, H);
+  drawNotebookGrid();
+
+  if (currentMode === 'practice') {
+    drawPracticeNavigation();
+  } else if (currentMode === 'quiz') {
+    drawQuizHeader();
+  }
+
+  drawPlateCircle();
+  drawButtons();
+  updateAndDrawEffects();
+
+  if (redFlashAlpha > 0) {
+    ctx.fillStyle = `rgba(230, 57, 70, ${redFlashAlpha})`;
+    ctx.fillRect(0, 0, W, H);
+    redFlashAlpha -= 0.025;
+  }
+
+  // Footer text
+  ctx.save();
+  ctx.fillStyle = '#A0AAB2';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText("by : Ing. Milko Gonzales C.", W / 2, H - 6);
+  ctx.restore();
+
+  if (currentMode === 'practice') {
+    drawPracticeWinOverlay();
+  } else if (currentMode === 'quiz_result') {
+    drawQuizResultOverlay();
+  }
+
+  ctx.restore();
+  requestAnimationFrame(gameLoop);
+}
+
+// ---------------- INTERACTION ----------------
+function handleInteraction(px, py) {
+  initAudio();
+
+  // 1. QUIZ RESULT MODAL CLICK
+  if (currentMode === 'quiz_result') {
+    const modalW = Math.min(W * 0.9, 410);
+    const modalH = 360;
+    const my = (H - modalH) / 2;
+    const btnW = modalW * 0.75;
+    const btnH = 54;
+    const bx = (W - btnW) / 2;
+    const by = my + modalH - 78;
+
+    if (px >= bx && px <= bx + btnW && py >= by && py <= by + btnH) {
+      const percent = Math.round((quizScore / quizQuestions.length) * 100);
+      if (percent >= 80) {
+        generateQuiz();
+        currentMode = 'quiz';
+        startQuizQuestion();
+      } else {
+        currentMode = 'practice';
+        practiceCompleted.clear();
+        startPracticeLevel(0);
+      }
+    }
+    return;
+  }
+
+  // 2. PRACTICE WIN MODAL CLICK
+  if (currentMode === 'practice' && isPracticeWin) {
+    const modalW = Math.min(W * 0.86, 380);
+    const modalH = 260;
+    const my = (H - modalH) / 2;
+    const nW = modalW * 0.72;
+    const nH = 50;
+    const nx = (W - nW) / 2;
+    const ny = my + modalH - 68;
+
+    if (px >= nx && px <= nx + nW && py >= ny && py <= ny + nH) {
+      particles = [];
+      if (practiceCompleted.size >= practiceLevels.length) {
+        generateQuiz();
+        currentMode = 'quiz';
+        startQuizQuestion();
+      } else {
+        const nextIdx = (practiceIdx + 1) % practiceLevels.length;
+        startPracticeLevel(nextIdx);
+      }
+    }
+    return;
+  }
+
+  // 3. PRACTICE NAVIGATION CLICKS
+  if (currentMode === 'practice') {
+    const topY1 = 40;
+    const topY2 = 74;
+    const half = 5;
+    const spacing = Math.min(W / 6.2, 54);
+    const startX = W / 2 - ((half - 1) * spacing) / 2;
+
+    for (let idx = 0; idx < practiceLevels.length; idx++) {
+      const row = idx < 5 ? 0 : 1;
+      const col = idx % 5;
+      const bx = startX + col * spacing;
+      const by = row === 0 ? topY1 : topY2;
+      if (Math.hypot(px - bx, py - by) < 20) {
+        playPopSound(1.2);
+        startPracticeLevel(idx);
+        return;
+      }
+    }
+
+    const itemBarY = 110;
+    const itemSpacing = Math.min(W / 5.5, 60);
+    const itemStartX = W / 2 - ((itemTypes.length - 1) * itemSpacing) / 2;
+
+    for (let idx = 0; idx < itemTypes.length; idx++) {
+      const ix = itemStartX + idx * itemSpacing;
+      if (Math.hypot(px - ix, py - itemBarY) < 22) {
+        currentItemIndex = idx;
+        playPopSound(1.2);
+        speakEnglish(`Now let's count ${itemTypes[currentItemIndex].name}!`);
+        return;
+      }
+    }
+
+    const qBtnW = Math.min(W * 0.44, 180);
+    const qBtnH = 32;
+    const qBtnX = W / 2 - qBtnW / 2;
+    const qBtnY = 138;
+    if (px >= qBtnX && px <= qBtnX + qBtnW && py >= qBtnY && py <= qBtnY + qBtnH) {
+      generateQuiz();
+      currentMode = 'quiz';
+      startQuizQuestion();
+      return;
+    }
+  }
+
+  // 4. CIRCLE TAP (ADD ITEM)
+  const plate = getPlateCircle();
+  if (Math.hypot(px - plate.x, py - plate.y) <= plate.r) {
+    addItem();
+    return;
+  }
+
+  // 5. BUTTONS CLICKS
+  const { addBtn, removeBtn, clearBtn, verifyBtn } = getButtonsLayout();
+  if (px >= addBtn.x && px <= addBtn.x + addBtn.w && py >= addBtn.y && py <= addBtn.y + addBtn.h) {
+    addItem();
+    return;
+  }
+  if (px >= removeBtn.x && px <= removeBtn.x + removeBtn.w && py >= removeBtn.y && py <= removeBtn.y + removeBtn.h) {
+    removeItem();
+    return;
+  }
+  if (px >= clearBtn.x && px <= clearBtn.x + clearBtn.w && py >= clearBtn.y && py <= clearBtn.y + clearBtn.h) {
+    clearItems();
+    return;
+  }
+
+  // 6. VERIFY BUTTON (QUIZ MODE)
+  if (currentMode === 'quiz') {
+    if (px >= verifyBtn.x && px <= verifyBtn.x + verifyBtn.w && py >= verifyBtn.y && py <= verifyBtn.y + verifyBtn.h) {
+      checkQuizAnswer();
+      return;
+    }
+  }
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const px = e.clientX - rect.left;
+  const py = e.clientY - rect.top;
+  handleInteraction(px, py);
+});
+
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    speakEnglish("Welcome to Number and Quantity! Practice first, or tap Go to Quiz!");
+  }, 600);
+});
+
+gameLoop();
+</script>
+</body>
+</html>
