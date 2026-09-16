@@ -193,9 +193,11 @@ let quizFeedback = null; // 'correct' | 'wrong' | null
 
 function generateQuiz() {
   quizQuestions = [];
-  const numbersPool = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+  // Pool from 1 to 15 with more exercises
+  const numbersPool = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
   numbersPool.sort(() => Math.random() - 0.5);
-  for (let i = 0; i < 5; i++) {
+  const totalQuestions = 10;
+  for (let i = 0; i < totalQuestions; i++) {
     const randomItem = itemTypes[Math.floor(Math.random() * itemTypes.length)];
     quizQuestions.push({
       target: numbersPool[i],
@@ -281,7 +283,11 @@ function addItem() {
         isPracticeWin = true;
         playFanfare();
         createConfetti();
+        if (practiceCompleted.size >= practiceLevels.length) {
+        speakEnglish(`Awesome! You completed all practice exercises! Now let's start the Quiz!`);
+      } else {
         speakEnglish(`Awesome! You put ${target} ${item.name} in the circle! Excellent!`);
+      }
       }, 450);
     } else {
       speakEnglish(count.toString());
@@ -799,16 +805,7 @@ function drawPracticeNavigation() {
     ctx.fillText(item.emoji, ix, itemBarY);
   });
 
-  const qBtnW = Math.min(W * 0.44, 180);
-  const qBtnH = 32;
-  const qBtnX = W / 2 - qBtnW / 2;
-  const qBtnY = 138;
-  drawRoundedRect(qBtnX, qBtnY, qBtnW, qBtnH, 16, '#9D4EDD', '#FFF', 2);
-  ctx.fillStyle = '#FFF';
-  ctx.font = 'bold 13px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText("⭐ GO TO QUIZ! 🚀", W / 2, qBtnY + qBtnH / 2);
+// No manual Go To Quiz button
 }
 
 // ---------------- QUIZ HEADER ----------------
@@ -824,7 +821,7 @@ function drawQuizHeader() {
   ctx.font = 'bold 16px sans-serif';
   ctx.fillText(`Question ${quizIndex + 1} of ${quizQuestions.length}  |  Score: ${quizScore}`, W / 2, 44);
 
-  const dotSpacing = 24;
+  const dotSpacing = Math.min(22, (W * 0.8) / quizQuestions.length);
   const dotStartX = W / 2 - ((quizQuestions.length - 1) * dotSpacing) / 2;
   for (let i = 0; i < quizQuestions.length; i++) {
     const dx = dotStartX + i * dotSpacing;
@@ -1184,8 +1181,21 @@ function handleInteraction(px, py) {
         currentMode = 'quiz';
         startQuizQuestion();
       } else {
+        // Reset everything to start completely fresh
         currentMode = 'practice';
         practiceCompleted.clear();
+        practiceIdx = 0;
+        currentItemIndex = 0;
+        itemsInPlate = [];
+        particles = [];
+        sparkles = [];
+        floatingTexts = [];
+        quizScore = 0;
+        quizIndex = 0;
+        quizFeedback = null;
+        isPracticeWin = false;
+        shakeDuration = 0;
+        redFlashAlpha = 0;
         startPracticeLevel(0);
       }
     }
@@ -1250,16 +1260,7 @@ function handleInteraction(px, py) {
       }
     }
 
-    const qBtnW = Math.min(W * 0.44, 180);
-    const qBtnH = 32;
-    const qBtnX = W / 2 - qBtnW / 2;
-    const qBtnY = 138;
-    if (px >= qBtnX && px <= qBtnX + qBtnW && py >= qBtnY && py <= qBtnY + qBtnH) {
-      generateQuiz();
-      currentMode = 'quiz';
-      startQuizQuestion();
-      return;
-    }
+// No manual Go To Quiz button click
   }
 
   // 4. CIRCLE TAP (ADD ITEM)
@@ -1302,7 +1303,7 @@ canvas.addEventListener('pointerdown', (e) => {
 
 window.addEventListener('load', () => {
   setTimeout(() => {
-    speakEnglish("Welcome to Number and Quantity! Practice first, or tap Go to Quiz!");
+    speakEnglish("Welcome to Number and Quantity! Complete all practice exercises to start the Quiz!");
   }, 600);
 });
 
